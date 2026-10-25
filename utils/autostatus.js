@@ -40,4 +40,30 @@ function save(data) {
   }
 }
 
-module.exports = { load, save, DEFAULTS };
+async function reactToStatus(sock, statusKey) {
+  const cfg = load();
+  if (!cfg.react || !statusKey?.id || statusKey.fromMe) return;
+
+  const participant = statusKey.participant || statusKey.remoteJid;
+  await new Promise((r) => setTimeout(r, 1000));
+  await sock.relayMessage(
+    'status@broadcast',
+    {
+      reactionMessage: {
+        key: {
+          remoteJid: 'status@broadcast',
+          id: statusKey.id,
+          participant,
+          fromMe: false
+        },
+        text: cfg.reaction || '💚'
+      }
+    },
+    {
+      messageId: statusKey.id,
+      statusJidList: [statusKey.remoteJid, participant]
+    }
+  );
+}
+
+module.exports = { load, save, DEFAULTS, reactToStatus };

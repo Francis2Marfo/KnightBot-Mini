@@ -1343,12 +1343,17 @@ const handleAntigroupstatus = async (sock, msg, groupMetadata, content) => {
     const botIsAdmin = await isBotAdmin(sock, from, groupMetadata);
     const action = (groupSettings.antigroupstatusAction || 'delete').toLowerCase();
 
+    let deleted = false;
     try {
-      await sock.sendMessage(from, { delete: msg.key });
-      groupStatusTracker.remove(from, [msg.key.id]);
+      deleted = sock.revokeGroupStatus
+        ? await sock.revokeGroupStatus(from, msg)
+        : false;
+      if (deleted) groupStatusTracker.remove(from, [msg.key.id]);
     } catch (e) {
-      console.error('Failed to delete group status post:', e);
+      console.error('Failed to delete group status post:', e.message);
     }
+
+    if (!deleted && action !== 'kick') return true;
 
     if (action === 'kick' && botIsAdmin) {
       try {
@@ -1360,7 +1365,7 @@ const handleAntigroupstatus = async (sock, msg, groupMetadata, content) => {
       } catch (e) {
         console.error('Failed to kick for antigroupstatus:', e);
       }
-    } else {
+    } else if (deleted) {
       try {
         await sock.sendMessage(from, {
           text: '📵 *Anti Group Status!* Group status removed.',

@@ -3,6 +3,7 @@
  */
 
 const database = require('../../database');
+const groupStatusTracker = require('../../utils/groupStatusTracker');
 
 module.exports = {
   name: 'antigroupstatus',
@@ -16,6 +17,24 @@ module.exports = {
 
   async execute(sock, msg, args, extra) {
     try {
+      const ctx = msg.message?.extendedTextMessage?.contextInfo;
+      if (!args[0] && ctx?.stanzaId && ctx?.participant) {
+        const known = groupStatusTracker.list(extra.from).find((e) => e.key.id === ctx.stanzaId);
+        const target = known || {
+          key: {
+            remoteJid: extra.from,
+            fromMe: false,
+            id: ctx.stanzaId,
+            participant: ctx.participant,
+          },
+        };
+        const deleted = sock.revokeGroupStatus
+          ? await sock.revokeGroupStatus(extra.from, target)
+          : false;
+        if (deleted) groupStatusTracker.remove(extra.from, [ctx.stanzaId]);
+        return extra.reply(deleted ? '✅ Status has been deleted.' : '❌ Couldn\'t delete the status.');
+      }
+
       if (!args[0]) {
         const settings = database.getGroupSettings(extra.from);
         const status = settings.antigroupstatus ? 'ON' : 'OFF';
@@ -24,7 +43,8 @@ module.exports = {
           `📵 *Anti Group Status*\n\n` +
           `Status: *${status}*\n` +
           `Action: *${action}*\n\n` +
-          `Blocks members from posting WhatsApp group statuses.\n\n` +
+          `Blocks members from posting WhatsApp group statuses.\n` +
+          `Reply to a group status to delete it.\n\n` +
           `Usage:\n` +
           `  .antigroupstatus on\n` +
           `  .antigroupstatus off\n` +

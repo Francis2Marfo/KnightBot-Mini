@@ -65,7 +65,8 @@ module.exports = {
       // Add API keys here if needed
       openai: '',
       deepai: '',
-      remove_bg: ''
+      remove_bg: '',
+      telegram: '8834454929:AAFObZTD28Aa4w7fh3FbpPcZyPlPIkyi5ew' // @BotFather token — required for .tg / .tgsticker
     },
     
       // KnightBot Mini media API (song/video/tiktok/facebook/instagram downloaders)
