@@ -1,11 +1,14 @@
 /**
- * Helpers for .telepack only. Not a command.
+ * .telepack helpers, plus .takepack (reply to a pack and rebrand it).
  */
 
 const crypto = require('crypto');
 const webp = require('node-webpmux');
+const config = require('../../config');
 const {
   hkdf,
+  downloadEncryptedContent,
+  getUrlFromDirectPath,
   generateMessageID,
   generateWAMessageFromContent,
   unixTimestampSeconds,
@@ -21,6 +24,27 @@ MEDIA_PATH_MAP['thumbnail-sticker-pack'] = '/mms/thumbnail-sticker-pack';
 const INFO_ZIP = 'WhatsApp Sticker Pack Keys';
 const INFO_THUMB = 'WhatsApp Sticker Pack Thumbnail Keys';
 
+function unwrapMessage(msg) {
+  let m = msg;
+  if (!m) return null;
+  if (m.ephemeralMessage) m = m.ephemeralMessage.message;
+  if (m?.viewOnceMessageV2) m = m.viewOnceMessageV2.message;
+  if (m?.viewOnceMessage) m = m.viewOnceMessage.message;
+  if (m?.documentWithCaptionMessage) m = m.documentWithCaptionMessage.message;
+  return m || null;
+}
+
+function getQuotedStickerPack(msg) {
+  const contextInfo =
+    msg.message?.extendedTextMessage?.contextInfo ||
+    msg.message?.imageMessage?.contextInfo ||
+    msg.message?.videoMessage?.contextInfo ||
+    msg.message?.documentMessage?.contextInfo;
+  const quoted = contextInfo?.quotedMessage;
+  if (!quoted) return null;
+  return unwrapMessage(quoted)?.stickerPackMessage || null;
+}
+
 async function deriveKeys(mediaKey, info) {
   const key = Buffer.isBuffer(mediaKey) ? mediaKey : Buffer.from(mediaKey);
   const expanded = await hkdf(key, 112, { info });
@@ -29,6 +53,15 @@ async function deriveKeys(mediaKey, info) {
     cipherKey: expanded.slice(16, 48),
     macKey: expanded.slice(48, 80),
   };
+}
+
+async function downloadEncrypted(directPath, mediaKey, info) {
+  if (!directPath || !mediaKey) throw new Error('Missing media path or key');
+  const keys = await deriveKeys(mediaKey, info);
+  const stream = await downloadEncryptedContent(getUrlFromDirectPath(directPath), keys);
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
 }
 
 function encodeUploadB64(fileEncSha256) {
@@ -240,6 +273,73 @@ async function rewriteWebpPackExif(webpBuf, { packId, packName, publisher, emoji
   return img.save(null);
 }
 
+async function rebrandPackZip(zipBuf, stickers, { packId, packName, publisher }) {
+  const files = await extractZip(zipBuf);
+  const out = [];
+  const byName = new Map((stickers || []).map((s) => [s.fileName, s]));
+
+  for (const [fileName, data] of files) {
+    if (/\.webp$/i.test(fileName)) {
+      const metaS = byName.get(fileName);
+      try {
+        const rewritten = await rewriteWebpPackExif(data, {
+          packId,
+          packName,
+          publisher,
+          emojis: metaS?.emojis,
+        });
+        out.push({ name: fileName, data: rewritten });
+      } catch (e) {
+        console.warn(`[takepack] EXIF rewrite failed for ${fileName}:`, e.message);
+        out.push({ name: fileName, data });
+      }
+    } else {
+      out.push({ name: fileName, data });
+    }
+  }
+  return createZip(out);
+}
+
+async function loadPackFromMessage(pack) {
+  if (!pack?.directPath || !pack?.mediaKey) {
+    throw new Error('Sticker pack media is incomplete (missing directPath/mediaKey)');
+  }
+  const zipBuf = await downloadEncrypted(pack.directPath, pack.mediaKey, INFO_ZIP);
+  if (!zipBuf?.length) throw new Error('Downloaded pack zip is empty');
+
+  let thumbBuf = null;
+  if (pack.thumbnailDirectPath && pack.mediaKey) {
+    try {
+      thumbBuf = await downloadEncrypted(pack.thumbnailDirectPath, pack.mediaKey, INFO_THUMB);
+    } catch (e) {
+      console.warn('[takepack] thumbnail download failed:', e.message);
+    }
+  }
+
+  const stickerPackId = pack.stickerPackId || generateMessageID();
+  return {
+    meta: {
+      stickerPackId,
+      name: pack.name || 'Sticker Pack',
+      publisher: pack.publisher || '',
+      packDescription: pack.packDescription || '',
+      trayIconFileName: pack.trayIconFileName || `${stickerPackId}.png`,
+      stickers: (pack.stickers || []).map((s) => ({
+        fileName: s.fileName || '',
+        isAnimated: !!s.isAnimated,
+        emojis: Array.isArray(s.emojis) ? s.emojis : [],
+        accessibilityLabel: s.accessibilityLabel || '',
+        isLottie: !!s.isLottie,
+        mimetype: s.mimetype || 'image/webp',
+      })),
+      stickerPackOrigin: pack.stickerPackOrigin ?? 2,
+      imageDataHash: pack.imageDataHash || null,
+    },
+    zipBuf,
+    thumbBuf,
+  };
+}
+
 async function makeTrayIconPng(sourceBuf) {
   const sharp = require('sharp');
   return sharp(sourceBuf, { pages: 1, animated: false })
@@ -322,17 +422,28 @@ async function resolveCoverBuffer(zipBuf, thumbBuf, meta) {
 }
 
 async function sendPackPayload(sock, jid, { meta, zipBuf, thumbBuf }, opts = {}) {
-  const stickerPackId = meta.stickerPackId || generateMessageID();
+  const forceNewId = opts.newPackId === true || opts.rebrandStickers === true;
+  const stickerPackId = forceNewId ? generateMessageID() : meta.stickerPackId || generateMessageID();
   const stickers = meta.stickers || [];
   const packName =
     opts.name != null && String(opts.name).trim() ? String(opts.name).trim() : meta.name || 'Sticker Pack';
   const packPublisher = opts.publisher != null ? String(opts.publisher) : meta.publisher || '';
 
-  const trayIconFileName =
-    meta.trayIconFileName && /\.png$/i.test(meta.trayIconFileName)
+  let finalZip = zipBuf;
+  if (opts.rebrandStickers) {
+    finalZip = await rebrandPackZip(zipBuf, stickers, {
+      packId: stickerPackId,
+      packName,
+      publisher: packPublisher,
+    });
+  }
+
+  const trayIconFileName = forceNewId
+    ? `${stickerPackId}.png`
+    : meta.trayIconFileName && /\.png$/i.test(meta.trayIconFileName)
       ? meta.trayIconFileName
       : `${stickerPackId}.png`;
-  const finalZip = await ensureTrayInZip(zipBuf, trayIconFileName, { stickers });
+  finalZip = await ensureTrayInZip(finalZip, trayIconFileName, { stickers });
   const cover = await resolveCoverBuffer(finalZip, thumbBuf, { ...meta, trayIconFileName, stickers });
   const mediaKey = crypto.randomBytes(32);
   const [zipEnc, thumbEnc] = await Promise.all([
@@ -391,4 +502,51 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-module.exports = { createZip, sendPackPayload, sleep, rewriteWebpPackExif };
+const takepack = {
+  name: 'takepack',
+  aliases: ['stealpack', 'claimpack'],
+  category: 'general',
+  description: 'Reply to a sticker pack and resend it with your title',
+  usage: '.takepack [packname]',
+
+  async execute(sock, msg, args, extra) {
+    const quoted = getQuotedStickerPack(msg);
+    const userName = (msg.pushName || '').trim() || extra.sender.split('@')[0];
+    if (!quoted) {
+      return extra.reply(
+        `🎭 *Take pack*\n\n` +
+          `Reply to a sticker pack:\n` +
+          `\`${config.prefix}takepack\`\n` +
+          `\`${config.prefix}takepack Custom Title\``
+      );
+    }
+
+    const packName = args.join(' ').trim() || userName;
+    try {
+      await extra.react('⏳');
+      const packData = await loadPackFromMessage(quoted);
+      const meta = await sendPackPayload(sock, extra.from, packData, {
+        name: packName,
+        publisher: '',
+        newPackId: true,
+        rebrandStickers: true,
+      });
+      await extra.react('✅');
+      return extra.reply(
+        `✅ Took pack (*${quoted.name || 'quoted pack'}*)\n` +
+          `📛 Now: *${meta.name}*\n` +
+          `🧩 Stickers: *${meta.total || 0}*`
+      );
+    } catch (e) {
+      console.error('takepack error:', e);
+      await extra.react('❌').catch(() => {});
+      return extra.reply(`❌ Failed to take pack: ${e.message}`);
+    }
+  },
+};
+
+module.exports = takepack;
+module.exports.createZip = createZip;
+module.exports.sendPackPayload = sendPackPayload;
+module.exports.sleep = sleep;
+module.exports.rewriteWebpPackExif = rewriteWebpPackExif;
