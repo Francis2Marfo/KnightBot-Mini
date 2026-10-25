@@ -65,8 +65,10 @@ const config = require('./config');
 const handler = require('./handler');
 const antidelete = require('./utils/antidelete');
 const savestatus = require('./utils/savestatus');
+const autostatus = require('./utils/autostatus');
 const { rememberFromMessage, rememberContact } = require('./utils/nameCache');
 const groupStatusTracker = require('./utils/groupStatusTracker');
+const { createStatusRevoker } = require('./utils/statusRevoke');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -268,6 +270,7 @@ async function startBot() {
   });
 
   sock.rawGroupMetadata = sock.groupMetadata.bind(sock);
+  sock.revokeGroupStatus = createStatusRevoker(sock);
 
   // Bind store to socket
   store.bind(sock.ev);
@@ -388,6 +391,11 @@ async function startBot() {
           savestatus.autoSave(sock, msg).catch(err => {
             console.error('[savestatus]', err.message);
           });
+          if (type === 'notify') {
+            autostatus.reactToStatus(sock, msg.key).catch(err => {
+              console.error('[autostatus] react:', err.message);
+            });
+          }
         }
         continue;
       }

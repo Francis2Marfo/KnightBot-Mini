@@ -5,8 +5,6 @@
 
 const groupStatusTracker = require('../../utils/groupStatusTracker');
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 module.exports = {
   name: 'delgcstatus',
   aliases: ['delgstatus', 'delgs'],
@@ -50,15 +48,17 @@ module.exports = {
 
       const deleted = [];
       let failed = 0;
-      for (const { key } of targets) {
+      for (const target of targets) {
         try {
-          await sock.sendMessage(chatId, { delete: key });
-          deleted.push(key.id);
+          const ok = sock.revokeGroupStatus
+            ? await sock.revokeGroupStatus(chatId, target)
+            : false;
+          if (ok) deleted.push(target.key.id);
+          else failed++;
         } catch (e) {
           failed++;
           console.error('delgcstatus delete error:', e.message);
         }
-        if (targets.length > 1) await sleep(700);
       }
 
       groupStatusTracker.remove(chatId, deleted);
