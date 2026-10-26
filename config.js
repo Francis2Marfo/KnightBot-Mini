@@ -4,19 +4,19 @@
 
 module.exports = {
     // Bot Owner Configuration
-    ownerNumber: ['9876543210'], // Add your number without + or spaces (e.g., 919876543210)
-    ownerName: ['Knight Bot Mini'], // Owner names corresponding to ownerNumber array
+    ownerNumber: ['233243729528'], // Add your number without + or spaces (e.g., 919876543210)
+    ownerName: ['Pocket'], // Owner names corresponding to ownerNumber array
     
     // Bot Configuration
-    botName: 'Knight Bot Mini',
+    botName: 'Pocket',
     prefix: '.',
     sessionName: 'session',
     sessionID: process.env.SESSION_ID || '', //Paste your session here 
     newsletterJid: '120363161513685998@newsletter', // Newsletter JID for menu forwarding
-    updateZipUrl: 'https://github.com/mruniquehacker/KnightBot-Mini/archive/refs/heads/main.zip', // URL to latest code zip for .update command
+    updateZipUrl: 'https://github.com/pocketmdd/pockebot/archive/refs/heads/main.zip', // URL to latest code zip for .update command
     
         // Sticker Configuration
-        packname: 'Knight Bot',
+        packname: 'pocket Bot',
     
         // Bot Behavior
         selfMode: false, // Private mode - only owner can use commands
@@ -84,7 +84,7 @@ module.exports = {
       wait: '⏳ Please wait...',
       success: '✅ Success!',
       error: '❌ Error occurred!',
-      ownerOnly: '👑 This command is only for bot owner!',
+      ownerOnly: '👑 This command is only for Pocket!',
       adminOnly: '🛡️ This command is only for group admins!',
       groupOnly: '👥 This command can only be used in groups!',
       privateOnly: '💬 This command can only be used in private chat!',
@@ -100,9 +100,9 @@ module.exports = {
     
     // Social Links (optional)
     social: {
-      github: 'https://github.com/mruniquehacker',
-      instagram: 'https://instagram.com/kngightbotmd',
-      youtube: 'http://youtube.com/@mr_unique_hacker'
+      github: 'https://github.com/pocketmdd',
+      instagram: 'https://instagram.com/apfpocket',
+      youtube: 'http://youtube.com/@apfpocket'
     }
 };
   
